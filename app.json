@@ -1,0 +1,31 @@
+{
+  "name": "Prolucian Trading Bot",
+  "description": "24/7 Trading Signals + Charts",
+  "repository": "https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME",
+  "env": {
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Your Telegram bot token",
+      "required": true
+    },
+    "MAIN_CHAT_ID": {
+      "description": "Your Telegram Main group ID",
+      "required": true
+    },
+    "VIP_CHAT_ID": {
+      "description": "Your Telegram VIP group ID",
+      "required": false
+    },
+    "ACCOUNT_BALANCE": {
+      "description": "Starting account balance",
+      "required": true,
+      "value": "10000"
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "free"
+    }
+  },
+  "stack": "heroku-22"
+}
