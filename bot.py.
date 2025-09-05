@@ -1,0 +1,92 @@
+import os, time, requests
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from ta.trend import EMAIndicator
+
+# === CONFIG ===
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+MAIN_CHAT = os.getenv("MAIN_CHAT_ID")
+VIP_CHAT = os.getenv("VIP_CHAT_ID")
+ACCOUNT_BALANCE = float(os.getenv("ACCOUNT_BALANCE", "10000"))
+
+SYMBOLS_MAIN = ["EURUSD=X", "XAUUSD=X", "BTC-USD"]
+SYMBOLS_VIP  = ["ETH-USD", "^NDX", "USO"]
+
+# === HELPERS ===
+def send_msg(chat_id, text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": chat_id, "text": text})
+
+def send_chart(chat_id, fig, filename="chart.png"):
+    path = f"/tmp/{filename}"
+    fig.write_image(path, scale=2)
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    with open(path, "rb") as f:
+        requests.post(url, data={"chat_id": chat_id}, files={"photo": f})
+
+# === STRATEGY LOGIC ===
+def analyze(symbol):
+    df = yf.download(symbol, period="30d", interval="1h")
+    if df.empty: return None
+
+    # EMA confluence
+    ema2  = EMAIndicator(df['Close'], 2).ema_indicator()
+    ema5  = EMAIndicator(df['Close'], 5).ema_indicator()
+    ema20 = EMAIndicator(df['Close'], 20).ema_indicator()
+    ema75 = EMAIndicator(df['Close'], 75).ema_indicator()
+    ema200= EMAIndicator(df['Close'],200).ema_indicator()
+    df = df.assign(ema2=ema2, ema5=ema5, ema20=ema20, ema75=ema75, ema200=ema200)
+
+    last = df.iloc[-1]
+    setup = None
+    if last.ema2 > last.ema5 > last.ema20 > last.ema200:
+        setup = "BUY"
+    elif last.ema2 < last.ema5 < last.ema20 < last.ema200:
+        setup = "SELL"
+
+    if not setup: return None
+
+    # Risk model
+    risk_pct = 0.05
+    risk_amt = ACCOUNT_BALANCE * (risk_pct/100)
+    sl = last.Close * (1 - 0.0005 if setup=="BUY" else 1 + 0.0005)
+    tp = last.Close * (1 + 0.045 if setup=="BUY" else 1 - 0.045)
+
+    # Chart
+    fig = go.Figure(data=[go.Candlestick(x=df.index,
+        open=df['Open'], high=df['High'],
+        low=df['Low'], close=df['Close'])])
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema20'], line=dict(color="blue"), name="EMA20"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['ema200'], line=dict(color="black"), name="EMA200"))
+
+    return {
+        "symbol": symbol,
+        "signal": setup,
+        "entry": round(last.Close, 4),
+        "sl": round(sl, 4),
+        "tp": round(tp, 4),
+        "risk": round(risk_amt, 2),
+        "fig": fig
+    }
+
+# === MAIN LOOP ===
+while True:
+    for sym in SYMBOLS_MAIN:
+        sig = analyze(sym)
+        if sig:
+            msg = f"📊 {sig['symbol']} | {sig['signal']}\n" \
+                  f"Entry: {sig['entry']}\nSL: {sig['sl']}\nTP: {sig['tp']}\nRisk: ${sig['risk']}"
+            send_msg(MAIN_CHAT, msg)
+            send_chart(MAIN_CHAT, sig["fig"], f"{sym}.png")
+
+    for sym in SYMBOLS_VIP:
+        sig = analyze(sym)
+        if sig:
+            msg = f"🔥 VIP {sig['symbol']} | {sig['signal']}\n" \
+                  f"Entry: {sig['entry']}\nSL: {sig['sl']}\nTP: {sig['tp']}\nRisk: ${sig['risk']}"
+            send_msg(VIP_CHAT, msg)
+            send_chart(VIP_CHAT, sig["fig"], f"{sym}.png")
+
+    time.sleep(3600)  # run every hour
